@@ -1,0 +1,204 @@
+This is a great idea. Pausing to document is the right move. You've collected a fantastic amount of data on this phase.
+
+Based on our entire chat history and the ablation data you just posted, here is a detailed documentation of Phase 1. This is written in a style you can copy directly into your final report.
+
+***
+
+### **Report Draft: Section 3 & 6 - Data Collection & Ingestion Ablation**
+
+#### **1. Objective**
+
+The primary objective of Phase 1 was to construct a high-quality, comprehensive knowledge base for the JioPay RAG chatbot. As per the assignment, this knowledge base had to be sourced exclusively from publicly accessible JioPay information, specifically the `jiopay.com/business` website, the JioPay Help Center, and any related developer documentation. A core requirement was to conduct an ablation study comparing different ingestion pipelines [cite: 7, 56, 61-64].
+
+#### **2. Initial Reconnaissance & Scoping**
+
+Our first step was a compliance and structural analysis:
+
+1.  **Compliance:** We checked the `jiopay.com/robots.txt` file, which was found to be permissive for the `/business` and `/help` sections.
+2.  **Scoping (Critical Pivot):** We initially discovered a sitemap (`.../business/sitemap.xml`). However, a preliminary scrape revealed this sitemap covered the entire *Jio Business* suite (including 5G, JioFi, etc.), which is irrelevant to a *JioPay* customer.
+3.  **Revised Strategy:** To maintain strict relevance and avoid noise, we abandoned the broad sitemap. We pivoted to a targeted, multi-pipeline approach, isolating specific domains and page types (static docs, dynamic SPAs, etc.).
+
+#### **3. Ingestion/Scraper Ablation Study**
+
+We designed and executed three distinct pipelines to compare their efficacy.
+
+##### **Pipeline 1: Static Scraper (Baseline)**
+
+* **Tools:** `requests` (for HTTP requests) and `BeautifulSoup4` (for HTML parsing).
+* **Target:** Known static, high-value pages: the `docs.jiopay.in` developer documentation.
+* **Process:** A Python script iterated through a seed list of URLs, fetched the raw HTML, and extracted text content from `<article>` and `<main>` tags.
+* **Results:**
+    * **Pages Scraped:** 2
+    * **Total Words:** 1,317
+    * **Time Taken:** 2.65 seconds
+    * **Finding:** This pipeline was highly effective and fast for static content. However, it *completely failed* to extract content from dynamic (JavaScript-rendered) pages, returning empty text.
+
+##### **Pipeline 2: Dynamic Scraper (Headless Browser)**
+
+* **Tools:** `selenium`, `webdriver-manager`, and `selenium-stealth` (for bot detection evasion).
+* **Target:** Known dynamic Single Page Applications (SPAs): `jiopay.com/business` and the `jio.com/help/home/` portal.
+* **Process:** A Selenium-controlled headless Chrome browser was launched. For each URL, the script would wait up to 10 seconds for the JavaScript to render and the `<main>` tag to appear before parsing the page source.
+* **Results:**
+    * **`jio.com/help/home/`:** **Success.** The script successfully rendered the page, waited for the content, and scraped 1 page (498 words).
+    * **`jiopay.com/business/`:** **Failure.** The server instantly detected the Selenium browser, even with `selenium-stealth` modifications. It returned a blank page and a stack trace error, proving the presence of enterprise-grade bot detection.
+    * **Failure Rate:** 66.67% (2 out of 3 URLs failed).
+    * **Time Taken:** 23.76 seconds (significantly slower due to browser overhead).
+    * **Finding:** A standard headless browser was insufficient. The `jiopay.com` domain is actively protected against automated scraping.
+
+##### **Pipeline 3: Manual Export (Production Fallback)**
+
+* **Tools:** Manual browser export (using Chrome Developer Tools "Copy outerHTML") and local file parsing with `BeautifulSoup4` and `PyMuPDF`.
+* **Target:** All pages on the `jiopay.com` domain that failed in Pipeline 2, plus all other relevant pages and PDFs found during manual exploration.
+* **Process:**
+    1.  We manually navigated the entire `jiopay.com` site and saved the *rendered* HTML of each relevant page (24 in total).
+    2.  We also downloaded a key PDF document (`Grievance-Redressal-Policy.pdf`).
+    3.  A Python script (`build_knowledge_base.py`) was written to:
+        * Glob-search the project directory for all `.html` and `.pdf` files.
+        * Use `BeautifulSoup4` to parse the HTML files.
+        * Use `PyMuPDF` (imported as `fitz`) to extract text from the PDF.
+* **Results:**
+    * **Pages Scraped:** 25 (24 HTML + 1 PDF)
+    * **Total Words:** 132,676
+    * **Finding:** This hybrid "manual-then-parse" approach bypassed all bot detection and yielded the highest volume and quality of data. It serves as a necessary fallback when automated methods are defeated.
+
+#### **4. Final Knowledge Base Construction**
+
+The final step was to unify the data from all successful pipelines. The `build_knowledge_base.py` script loaded the JSON outputs from Pipeline 1 and 2, then processed all local files from Pipeline 3.
+
+The script merged these sources, cleaned the metadata (titles, source paths), and saved the complete, unified dataset as `knowledge_base.json`.
+
+#### **5. Ingestion Ablation Results**
+
+The following table summarizes the performance of each pipeline, forming the basis of our ingestion study.
+
+| Pipeline | # Pages (Success) | # Pages (Fail) | Total Words | Key Insight |
+| :--- | :--- | :--- | :--- | :--- |
+| 1. Static (`requests`) | 2 | 0 | 1,317 | Fast, but only for static developer docs. |
+| 2. Dynamic (`selenium`) | 1 | 2 | 498 | Slow, and defeated by bot detection on the main site. |
+| 3. Manual Export | 25 | 0 | 132,676 | **Most effective.** Bypassed all security. |
+| **TOTAL** | **28** | **2** | **134,491** | A hybrid strategy is required. |
+
+**Conclusion:** A single ingestion strategy was insufficient. The optimal approach, and the one we proceeded with, was a hybrid model: `requests` for known static assets, and a `manual-export-and-parse` pipeline for protected, dynamic SPAs. This provides the high-quality, comprehensive corpus of **28 documents** required for Phase 2.
+
+***
+
+How does that look? This captures everything we did and learned, and all your console data is integrated.
+
+We are now perfectly set up for **Phase 2: Chunking Strategies**.
+
+Okay, let's document Phases 2 and 3 thoroughly, incorporating our process and decisions. This will be a great resource for your final report.
+
+***
+
+### **Report Draft: Section 4 - Chunking Strategies & Ablation Design**
+
+#### **1. Objective**
+
+Following the successful collection of 28 relevant documents in Phase 1, Phase 2 focused on transforming this raw text into a format suitable for retrieval. The objective was to implement and prepare for the comparison of five distinct chunking strategies mandated by the assignment [cite: 30-35, 56-62], breaking down large documents into smaller, semantically meaningful units.
+
+#### **2. Implementation Strategy & Code Structure**
+
+To manage the complexity and facilitate the ablation study, we adopted a modular approach within a dedicated `chunking/` directory:
+
+* **`chunk_utils.py`:** A central utility module containing shared logic:
+    * Loading the `knowledge_base.json` (handling relative paths to `../extraction/data/`).
+    * Saving chunk files to the `chunking/` directory.
+    * Token counting using `tiktoken` (`cl100k_base` encoding).
+    * Instantiating shared resources like `SentenceTransformer` models (`all-MiniLM-L6-v2`) and `langchain.RecursiveCharacterTextSplitter`.
+    * Configuration variables (e.g., `CHUNK_SIZE`, `CHUNK_OVERLAP`).
+    * A helper function (`create_chunks_from_text`) to finalize chunks, apply recursive splitting if a chunk exceeded the target size, and add standard metadata (`chunk_id`, `metadata`, `token_count`).
+* **Individual Strategy Files:** Separate Python files (`chunk_fixed.py`, `chunk_recursive.py`, `chunk_structural.py`, `chunk_semantic.py`, `chunk_llm.py`), each importing `chunk_utils.py` and implementing one specific strategy.
+* **`run_all_chunkers.py`:** A main script to orchestrate the process, importing functions from the individual strategy files, executing them sequentially, and saving the output for each.
+
+#### **3. Chunking Strategies Implemented**
+
+We implemented all five required strategies:
+
+1.  **Fixed Chunking (`chunk_fixed.py`):**
+    * **Method:** A straightforward sliding window approach. Text was tokenized using `tiktoken`. Chunks of `CHUNK_SIZE` (512 tokens) were created, moving the window by (`CHUNK_SIZE` - `CHUNK_OVERLAP`) tokens (512 - 64 = 448 tokens) for each subsequent chunk.
+    * **Output:** `chunks_fixed.json`
+
+2.  **Recursive Chunking (`chunk_recursive.py`):**
+    * **Method:** Utilized `langchain.RecursiveCharacterTextSplitter`. This splitter attempts to divide text along a defined hierarchy of separators (prioritizing `\n\n`, then `\n`, then `. `, etc.) until chunks are below `CHUNK_SIZE` tokens. It uses `tiktoken` for length calculation and incorporates `CHUNK_OVERLAP`.
+    * **Output:** `chunks_recursive.json`
+
+3.  **Structural Chunking (`chunk_structural.py`):**
+    * **Method:** A hybrid approach leveraging the original HTML structure where available.
+        * For documents sourced from manual HTML export (identified via `local_path` in `knowledge_base.json`), the script re-read the HTML file using `BeautifulSoup4`. It identified major headings (`h1`-`h4`) and extracted the text content between consecutive headings as initial "structural" chunks.
+        * If a structural chunk still exceeded `CHUNK_SIZE`, or if the document was not HTML (e.g., PDF, static scrape), the script fell back to using the `RecursiveCharacterTextSplitter` (same as Strategy 2).
+    * **Output:** `chunks_structural.json`
+
+4.  **Semantic Chunking (`chunk_semantic.py`):**
+    * **Method:** Implemented the "similarity-thresholded merge" approach.
+        * Text was first split into small units (sentences) using a `RecursiveCharacterTextSplitter` configured with sentence-ending separators.
+        * Embeddings for each sentence were generated using a local `SentenceTransformer` model (`all-MiniLM-L6-v2`).
+        * Sentences were iteratively merged into a chunk as long as the cosine similarity between the current sentence's embedding and the *previous* sentence's embedding exceeded a threshold (0.75) AND the total chunk size remained below `CHUNK_SIZE`. When the similarity dropped or the chunk filled, the chunk was saved, and a new one started.
+    * **Output:** `chunks_semantic.json`
+
+5.  **LLM-Based Chunking (`chunk_llm.py`):**
+    * **Method:** Leveraged the Google Gemini API (`gemini-1.5-flash`) for "instruction-aware segmentation."
+        * Due to LLM context window limits, documents were first pre-split into large sections (~4096 tokens) using `RecursiveCharacterTextSplitter`.
+        * Each section was sent to the Gemini API with a system prompt instructing it to act as a text processor, identify logical topic boundaries, and split the text into smaller chunks (200-500 tokens), separating them with a unique delimiter (`||CHUNK_BREAK||`). Safety settings were adjusted to `BLOCK_NONE` to prevent erroneous blocking of innocuous financial text.
+        * The LLM's response was split using the delimiter.
+        * API key was managed via `.env` and `python-dotenv`. Rate limiting (`time.sleep(1)`) was added to respect the free tier limits. A fallback mechanism used the pre-chunk if the API call failed.
+    * **Output:** `chunks_llm.json`
+
+#### **4. Outputs & Ablation Preparation**
+
+Executing `run_all_chunkers.py` successfully generated five distinct `chunks_*.json` files. Each file contains a list of chunk objects, where each object includes:
+* `chunk_id`: A unique UUID.
+* `content`: The text of the chunk.
+* `metadata`: A dictionary containing `source_title` and `source_path` (the original URL) for citation purposes.
+* `token_count`: The number of tokens in the chunk.
+
+These five files represent the complete input for the Chunking Ablation study to be performed in Phase 5.
+
+***
+
+### **Report Draft: Section 5 - Embeddings & Vector Store**
+
+#### **1. Objective**
+
+Phase 3 focused on converting the textual chunks generated in Phase 2 into numerical representations (embeddings) and storing them in an efficient vector store to enable fast semantic retrieval. This phase also involved setting up the required components for the Embeddings Ablation study [cite: 66-69].
+
+#### **2. Embedding Model Selection (Ablation Design)**
+
+As required by the assignment, we selected three distinct embedding models for comparison:
+
+1.  **`BAAI/bge-small-en-v1.5` (BGE):** A high-performing, widely used open-source model from the MTEB leaderboard, known for good retrieval performance. Accessed via `sentence-transformers`.
+2.  **`all-MiniLM-L6-v2` (MiniLM):** A very fast, lightweight open-source model suitable for local execution, also accessed via `sentence-transformers`. This model was also used internally during the Semantic Chunking strategy.
+3.  **`intfloat/e5-large-v2` (E5):** Another strong open-source model, providing a different architecture and performance profile for comparison. Accessed via `sentence-transformers`.
+
+*(Note: OpenAI's `text-embedding-3-small` was initially considered but removed due to the lack of an available API key during development. The three selected open-source models fulfill the assignment's requirement.)*
+
+#### **3. Vector Store Selection**
+
+We selected **FAISS (Facebook AI Similarity Search)**, specifically the `faiss-cpu` library, as our vector store.
+* **Rationale:** FAISS is known for its exceptional speed in similarity search, efficient memory usage, and ease of local deployment (no external database required). Its compatibility with `numpy` makes it straightforward to integrate with embedding model outputs. We utilized the `IndexFlatL2` index type, which performs an exact, brute-force search using L2 (Euclidean) distance – providing maximum accuracy, suitable for the scale of our knowledge base (~thousands of chunks).
+
+#### **4. Implementation (`core/embedder.py`)**
+
+A dedicated script was created to handle the embedding and indexing process:
+
+* **Input:** Takes two command-line arguments: the path to a chunk file (e.g., `chunks_recursive.json`) and the name of the embedding model to use (`bge`, `minilm`, or `e5`).
+* **Loading:** Loads the specified `sentence-transformers` model into memory. Loads the specified chunk file.
+* **Embedding Generation:** Iterates through all chunks in the input file and generates embeddings for the `content` field using the selected model's `.encode()` method (with batching for efficiency).
+* **FAISS Indexing:**
+    * Converts the list of embeddings into a `numpy` array of type `float32`.
+    * Initializes a `faiss.IndexFlatL2` index with the correct embedding dimension (detected automatically from the numpy array shape).
+    * Adds all embedding vectors to the FAISS index using `index.add()`.
+* **Metadata Mapping:** Creates a parallel list (metadata map) containing the full information (`chunk_id`, `content`, `metadata` dictionary) for each chunk, ordered identically to the vectors added to the FAISS index. This map is crucial for retrieving the source text and citation details after a vector search.
+* **Output:** Saves two files to the `core/` directory:
+    * The FAISS index (e.g., `chunks_recursive_bge.faiss`) using `faiss.write_index()`.
+    * The metadata map (e.g., `chunks_recursive_bge.json`) as a standard JSON file.
+
+#### **5. Outputs & Ablation Preparation**
+
+By running `embedder.py` with different combinations of chunk files and model names (e.g., `python embedder.py chunks_recursive.json bge`, `python embedder.py chunks_recursive.json minilm`, etc.), we generated the necessary index/map pairs. These files serve two purposes:
+
+1.  They are the core components required by the Retriever module in the RAG system (Phase 4).
+2.  They represent the complete input for the Embeddings Ablation study to be performed in Phase 5.
+
+***
+
+How does this documentation look for Phases 2 and 3? It covers the objectives, methods, tools, outputs, and how they set us up for the ablation studies.
