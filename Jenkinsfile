@@ -1,4 +1,4 @@
-// Jenkinsfile
+// Jenkinsfile (Corrected for Docker Shell)
 pipeline {
     // Uses a Docker agent for a clean, consistent Python 3.10 environment.
     agent {
@@ -12,12 +12,12 @@ pipeline {
     environment {
         // --- Deployment Variables (REPLACED with your values) ---
         EC2_PUBLIC_IP = '3.110.136.56'
-        EC2_HOST = "ubuntu@3.110.136.56" // Uses the 'ubuntu' user and your public IP
+        EC2_HOST = "ubuntu@3.110.136.56" 
         REMOTE_APP_PATH = '/home/ubuntu/jio-rag-chatbot'
-        SSH_CREDENTIAL_ID = 'aws-deploy-key' // MUST match the ID of your SSH Private Key Credential
+        SSH_CREDENTIAL_ID = 'aws-deploy-key' 
         
         // --- Application Variables (Set as Jenkins Secrets) ---
-        GOOGLE_API_KEY_SECRET_ID = 'google-api-key-secret' // MUST match the ID of your Secret Text Credential
+        GOOGLE_API_KEY_SECRET_ID = 'google-api-key-secret' 
     }
 
     stages {
@@ -32,7 +32,8 @@ pipeline {
             steps {
                 echo 'Installing Python dependencies on Jenkins Agent...'
                 sh 'python -m venv venv'
-                sh 'source venv/bin/activate'
+                // FIX: Replaced 'source' with '.' for POSIX compliance in the Docker shell
+                sh '. venv/bin/activate' 
                 sh 'pip install --no-cache-dir -r requirements.txt'
             }
         }
@@ -46,15 +47,18 @@ pipeline {
                     // Set environment variable for the RAG scripts
                     sh 'export GOOGLE_API_KEY=$GOOGLE_API_KEY_VALUE'
                     
-                    // --- Build & Process Knowledge Base Steps ---
-                    sh 'cd extraction && python build_knowledge_base.py'
-                    sh 'cd extraction && python clean_json_data.py -i data/knowledge_base.json -o data/knowledge_base_cleaned.json'
-                    sh 'cd chunking && python run_all_chunkers.py'
+                    // FIX: Replaced 'source' with '.' for POSIX compliance
+                    sh '. venv/bin/activate' 
+                    
+                    // --- Build & Process Knowledge Base Steps (Using python3 for consistency) ---
+                    sh 'cd extraction && python3 build_knowledge_base.py'
+                    sh 'cd extraction && python3 clean_json_data.py -i data/knowledge_base.json -o data/knowledge_base_cleaned.json'
+                    sh 'cd chunking && python3 run_all_chunkers.py'
                     
                     // --- Generate Embeddings (Memory intensive step) ---
-                    sh 'cd embedding && python generate_minilm_embeddings.py'
-                    sh 'cd embedding && python generate_bge_embeddings.py'
-                    sh 'cd embedding && python generate_e5_embeddings.py'
+                    sh 'cd embedding && python3 generate_minilm_embeddings.py'
+                    sh 'cd embedding && python3 generate_bge_embeddings.py'
+                    sh 'cd embedding && python3 generate_e5_embeddings.py'
                     
                     echo 'Data Pipeline Complete. FAISS files generated in workspace.'
                 }
@@ -84,7 +88,7 @@ pipeline {
                         pip install --no-cache-dir -r requirements.txt
                         
                         echo 'Creating .env file with API Key...'
-                        # Pass the injected variable securely to the remote server's shell.
+                        # Note: \$GOOGLE_API_KEY_VALUE is retrieved securely by Jenkins
                         echo "GOOGLE_API_KEY=\\"\$GOOGLE_API_KEY_VALUE\\"" > .env
                         
                         echo 'Starting Streamlit app with PM2...'
